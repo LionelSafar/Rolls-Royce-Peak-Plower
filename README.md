@@ -1,2 +1,2 @@
 # Rolls-Royce-Peak-Plower
-car go woosh..
+Deep Q-learning (DQN) and Dyna agent implementation to train the Gymnasium 'MountainCar-v0'
