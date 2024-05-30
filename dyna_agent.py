@@ -3,7 +3,7 @@ import numpy as np
 
 class DynaAgent:
     def __init__(self, env, trainable: bool, k=10, discr_step=(0.025, 0.005), gamma=0.99, epsilon=0.9,
-                 epsilon_decay=0.99999, epsilon_min=0.05):
+                 epsilon_decay=0.99999, epsilon_min=0.05, snapshot_episodes=(100, 500, 1000, 3000)):
         # Initialize agent
         self.observation_space = env.observation_space
         self.action_space = env.action_space
@@ -13,11 +13,13 @@ class DynaAgent:
         self.epsilon = epsilon  # exploration rate
         self.epsilon_decay = epsilon_decay  # decaying rate of epsilon
         self.epsilon_min = epsilon_min  # minimum value of epsilon
+        self.snapshot_episodes = snapshot_episodes
 
         # Create the bins based on the discr_step
         self.bins = [np.arange(self.observation_space.low[i], self.observation_space.high[i], discr_step[i]) for i in
                      range(self.observation_space.shape[0])]
-        n_states = (len(self.bins[0]) + 1) * (len(self.bins[1]) + 1)
+        n_states = (len(self.bins[0]) - 1) * (len(self.bins[1]) - 1)
+        # Fix the bins limits because they are not precise
 
         # Create the arrays
         # 1. Arrays to compute P_hat and R_hat
@@ -34,7 +36,13 @@ class DynaAgent:
         self.current_transition = None
 
         # Track training stats
+        self.episodes = 0
+
         self.steps_q_values_updates = []
+        self.q_values_snapshots = []
+
+        self.curr_episode_trajectory = []
+        self.trajectories_snapshots = []
 
         self.curr_episode_length = 0
         self.episodes_lengths = []
@@ -46,9 +54,10 @@ class DynaAgent:
         self.cumulative_successes = []
 
     def discretize_state(self, state):
-        # Return the unique number associated to the state after discretization
-        dis_state_2d = [np.digitize(state[i], self.bins[i]) for i in range(self.observation_space.shape[0])]
-        return dis_state_2d[0] * len(self.bins[1] - 1) + dis_state_2d[1]
+        # Return the unique number and the 2d-state associated to the state after discretization
+        dis_state_2d = [np.digitize(state[i], self.bins[i]) - 1 for i in range(self.observation_space.shape[0])]
+        dis_state_id = dis_state_2d[0] * (len(self.bins[1]) - 1) + dis_state_2d[1]
+        return dis_state_id, dis_state_2d
 
     def observe(self, state, action, next_state, reward, terminated, truncated):
         # Increment the agent's steps count
@@ -62,15 +71,18 @@ class DynaAgent:
         self.curr_episode_env_reward += reward
 
         # Discretize the states
-        dis_state = self.discretize_state(state)
-        dis_next_state = self.discretize_state(next_state)
+        dis_state_id, dis_state_2d = self.discretize_state(state)
+        dis_next_state_id, _ = self.discretize_state(next_state)
 
         # Increment counters
-        self.state_action_count[dis_state, action] += 1
-        self.transition_count[dis_state, action, dis_next_state] += 1
+        self.state_action_count[dis_state_id, action] += 1
+        self.transition_count[dis_state_id, action, dis_next_state_id] += 1
 
         # Store the current state-action pair and reward, used in update()
-        self.current_transition = (dis_state, action, reward)
+        self.current_transition = (dis_state_id, action, reward)
+
+        # Store the trajectory
+        self.curr_episode_trajectory.append(dis_state_2d)
 
         # Update the agent's Q-values
         if self.trainable:
@@ -82,12 +94,26 @@ class DynaAgent:
             self.episodes_env_rewards.append(self.curr_episode_env_reward)
             self.cumulative_successes.append(self.success_count)
 
+            self.episodes += 1
+
+            # Take snapshots of Q-values and trajectories
+            if self.episodes in self.snapshot_episodes:
+                # Put the Q-values in a 2D array
+                q_values = np.reshape(np.max(self.Q, axis=1), ((len(self.bins[0])) - 1, -1))
+                # Keep only the values of visited states
+                q_values[(self.state_action_count.sum(axis=1) == 0).reshape((len(self.bins[0])) - 1, -1)] = np.nan
+                # Save the Q-values snapshot
+                self.q_values_snapshots.append(q_values)
+                # Save the trajectory
+                self.trajectories_snapshots.append(self.curr_episode_trajectory.copy())
+
             self.curr_episode_length = 0
             self.curr_episode_env_reward = 0
+            self.curr_episode_trajectory = []
 
     def select_action(self, state):
         # Select action based on epsilon-greedy policy
-        dis_state = self.discretize_state(state)
+        dis_state_id, _ = self.discretize_state(state)
 
         # Exponentially decaying epsilon
         self.epsilon = max(self.epsilon * self.epsilon_decay, self.epsilon_min)
@@ -96,7 +122,7 @@ class DynaAgent:
         if np.random.rand() < self.epsilon and self.trainable:
             action = self.action_space.sample()
         else:
-            action = np.argmax(self.Q[dis_state, :])
+            action = np.argmax(self.Q[dis_state_id, :])
 
         return action
 
@@ -151,6 +177,8 @@ class DynaAgent:
             "episodes_lengths": self.episodes_lengths,
             "episodes_environment_rewards": self.episodes_env_rewards,
             "cumulative_successes": self.cumulative_successes,
-            "steps_dqn_loss": self.steps_q_values_updates
             # Potentially change this, but should work with plots functions
+            "steps_dqn_loss": self.steps_q_values_updates,
+            "q_values_snapshots": self.q_values_snapshots,
+            "trajectories_snapshots": self.trajectories_snapshots
         }
