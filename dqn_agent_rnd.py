@@ -8,7 +8,7 @@ import random
 
 
 class DQNAgentRND:
-    def __init__(self, env, trainable: bool, reward_factor=1.0, gamma=0.99999, epsilon=0.9, epsilon_decay=0.99,
+    def __init__(self, env, trainable: bool, reward_factor=1.0, gamma=0.99, epsilon=0.9, epsilon_decay=0.99999,
                  epsilon_min=0.05, batch_size=64, learning_rate=0.001, sync_rate=1000, optimizer=optim.AdamW):
 
         # Initialize agent
