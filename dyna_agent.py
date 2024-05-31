@@ -119,7 +119,7 @@ class DynaAgent:
         self.epsilon = max(self.epsilon * self.epsilon_decay, self.epsilon_min)
 
         # Choose action randomly or based on Q-values
-        if np.random.rand() < self.epsilon and self.trainable:
+        if np.random.rand() < self.epsilon:
             action = self.action_space.sample()
         else:
             action = np.argmax(self.Q[dis_state_id, :])
@@ -127,46 +127,44 @@ class DynaAgent:
         return action
 
     def update(self):
-        if self.trainable:
+        # Unpack current transition
+        (dis_state, action, reward) = self.current_transition
 
-            # Unpack current transition
-            (dis_state, action, reward) = self.current_transition
+        # Update the transition probabilities
+        self.P_hat[dis_state, action, :] = self.transition_count[dis_state, action, :] / self.state_action_count[
+            dis_state, action]
 
-            # Update the transition probabilities
-            self.P_hat[dis_state, action, :] = self.transition_count[dis_state, action, :] / self.state_action_count[
-                dis_state, action]
+        # Update the expected reward using a running average
+        self.R_hat[dis_state, action] = ((self.state_action_count[dis_state, action] - 1) * self.R_hat[
+            dis_state, action] + reward) / self.state_action_count[dis_state, action]
 
-            # Update the expected reward using a running average
-            self.R_hat[dis_state, action] = ((self.state_action_count[dis_state, action] - 1) * self.R_hat[
-                dis_state, action] + reward) / self.state_action_count[dis_state, action]
+        # Update the Q-value
+        old_q_val = self.Q[dis_state, action]
+        self.Q[dis_state, action] = self.R_hat[dis_state, action] + self.gamma * np.sum(
+            self.P_hat[dis_state, action, :] * np.max(self.Q, axis=1))
 
-            # Update the Q-value
+        # Keep track of the Q-values updates
+        update_sum = np.abs(old_q_val - self.Q[dis_state, action])
+
+        # Perform additional updates on already encountered state-action pairs
+        # Get the already encountered pairs
+        encountered_states_actions = np.argwhere(self.state_action_count > 0)
+
+        # Choose k random pairs among them
+        random_idx = np.random.randint(low=0, high=len(encountered_states_actions), size=self.k)
+        random_states_actions = encountered_states_actions[random_idx]
+
+        # Update the Q-value for those pairs
+        for state_action in random_states_actions:
+            dis_state = state_action[0]
+            action = state_action[1]
             old_q_val = self.Q[dis_state, action]
             self.Q[dis_state, action] = self.R_hat[dis_state, action] + self.gamma * np.sum(
                 self.P_hat[dis_state, action, :] * np.max(self.Q, axis=1))
+            update_sum += np.abs(old_q_val - self.Q[dis_state, action])
 
-            # Keep track of the Q-values updates
-            update_sum = np.abs(old_q_val - self.Q[dis_state, action])
-
-            # Perform additional updates on already encountered state-action pairs
-            # Get the already encountered pairs
-            encountered_states_actions = np.argwhere(self.state_action_count > 0)
-
-            # Choose k random pairs among them
-            random_idx = np.random.randint(low=0, high=len(encountered_states_actions), size=self.k)
-            random_states_actions = encountered_states_actions[random_idx]
-
-            # Update the Q-value for those pairs
-            for state_action in random_states_actions:
-                dis_state = state_action[0]
-                action = state_action[1]
-                old_q_val = self.Q[dis_state, action]
-                self.Q[dis_state, action] = self.R_hat[dis_state, action] + self.gamma * np.sum(
-                    self.P_hat[dis_state, action, :] * np.max(self.Q, axis=1))
-                update_sum += np.abs(old_q_val - self.Q[dis_state, action])
-
-            # Store the average update of Q-values for this step
-            self.steps_q_values_updates.append(update_sum / (self.k + 1))
+        # Store the average update of Q-values for this step
+        self.steps_q_values_updates.append(update_sum / (self.k + 1))
 
     def save(self):
         if self.trainable:
